@@ -155,6 +155,98 @@ class Qi:
         self.amount = max(0, min(100, self.amount + delta_amount))
         self.purity = max(0, min(10, self.purity + delta_purity))
 
+    # ===== 气的本质扩展 =====
+    # 气的品质分类
+    QI_QUALITY = {
+        '清气': {'purity_min': 8, 'effect': '升阳'},
+        '浊气': {'purity_min': 0, 'purity_max': 3, 'effect': '降阴'},
+        '正气': {'purity_min': 6, 'alignment': '阳', 'effect': '吉'},
+        '邪气': {'purity_min': 0, 'purity_max': 4, 'alignment': '阴', 'effect': '凶'}
+    }
+    
+    # 气与神煞关联
+    QI_SHEN_SHA = {
+        '天乙': {'wuxing': '土', 'quality': '清气', 'effect': '贵'},
+        '太极': {'wuxing': '水', 'quality': '清气', 'effect': '智'},
+        '文昌': {'wuxing': '木', 'quality': '正气', 'effect': '文'},
+        '驿马': {'wuxing': '火', 'quality': '浊气', 'effect': '动'},
+        '将星': {'wuxing': '金', 'quality': '正气', 'effect': '威'}
+    }
+    
+    def get_quality(self) -> str:
+        """获取气的品质分类"""
+        if self.purity >= 8:
+            return '清气'
+        elif self.purity >= 6:
+            return '正气'
+        elif self.purity <= 3:
+            return '浊气'
+        else:
+            return '普通'
+    
+    def get_alignment(self) -> str:
+        """获取气的阴阳属性"""
+        # 根据五行和纯度判断阴阳
+        yang_wuxing = ['木', '火']
+        yin_wuxing = ['金', '水']
+        if self.wuxing in yang_wuxing:
+            base = '阳'
+        elif self.wuxing in yin_wuxing:
+            base = '阴'
+        else:
+            base = '中'
+        # 纯度影响阴阳偏向
+        if self.purity >= 7:
+            return base
+        elif self.purity <= 3:
+            return '阴' if base == '阳' else '阳'
+        else:
+            return base
+    
+    def get_shen_sha_affinity(self, shen_sha_name: str) -> float:
+        """计算气与神煞的亲和度"""
+        shen_info = self.QI_SHEN_SHA.get(shen_sha_name)
+        if not shen_info:
+            return 0.0
+        # 五行匹配
+        wuxing_match = 1.0 if self.wuxing == shen_info['wuxing'] else 0.3
+        # 品质匹配
+        quality = self.get_quality()
+        quality_match = 1.0 if quality == shen_info['quality'] else 0.5
+        # 纯度影响
+        purity_factor = self.purity / 10.0
+        return (wuxing_match * 0.4 + quality_match * 0.4 + purity_factor * 0.2)
+    
+    def transform_quality(self, target_quality: str, amount: int = 5):
+        """转化气品质"""
+        if target_quality == '清气':
+            self.purity = min(10, self.purity + amount)
+        elif target_quality == '浊气':
+            self.purity = max(0, self.purity - amount)
+        elif target_quality == '正气':
+            self.purity = min(10, max(6, self.purity))
+    
+    def connect_to_dao(self, dao: Dao) -> dict:
+        """连接道，获取气的道性"""
+        balance = dao.check_balance(
+            yin_force=10 - self.purity if self.get_alignment() == '阴' else 0,
+            yang_force=self.purity if self.get_alignment() == '阳' else 0
+        )
+        return {
+            'wuxing_phase': dao.get_wuxing_phase(self.wuxing),
+            'yin_yang_balance': balance,
+            'taiji_level': dao.taiji
+        }
+    
+    def connect_to_de(self, de: De) -> dict:
+        """连接德，获取气的德性"""
+        virtue = de.get_virtue()
+        return {
+            'virtue': virtue,
+            'integrity': de.integrity,
+            'manifestation': de.manifestation * (self.purity / 10.0)
+        }
+
 # ================== GanZhi 类 ==================
 class GanZhi:
     GAN_WUXING = {'甲':'木','乙':'木','丙':'火','丁':'火','戊':'土','己':'土','庚':'金','辛':'金','壬':'水','癸':'水'}
@@ -216,6 +308,67 @@ class GanZhi:
         self.nayin_wuxing = NAYIN_MAP.get(new_gan+new_zhi, '土')
         self.qi.wuxing = self.nayin_wuxing
         self.qi.base_zhi = new_zhi
+
+    def get_shen_sha(self, ref_gan: str = None, ref_zhi: str = None) -> 'ShenSha':
+        """获取神煞对象（默认以日柱为参考）"""
+        # ShenSha类在文件后面定义，但运行时已加载
+        return ShenSha(self.gan, self.zhi, ref_gan, ref_zhi)
+    
+    def calculate_shen_sha_list(self, ref_gan: str = None, ref_zhi: str = None) -> dict:
+        """计算神煞列表"""
+        shen_sha = self.get_shen_sha(ref_gan, ref_zhi)
+        return shen_sha.shen_sha_list
+    
+    def apply_shen_sha_to_qi(self, ref_gan: str = None, ref_zhi: str = None):
+        """应用神煞影响至气"""
+        shen_sha = self.get_shen_sha(ref_gan, ref_zhi)
+        shen_sha.affect_qi(self.qi)
+    
+    def get_de_object(self) -> De:
+        """获取德对象（基于纳音五行）"""
+        de = De(self.nayin_wuxing)
+        # 根据气的纯度调整德性完整度
+        de.integrity = max(1, min(10, self.qi.purity // 2))
+        return de
+    
+    def get_dao_connection(self, dao: Dao) -> dict:
+        """连接道，获取干支的道性"""
+        # 五行相位
+        wuxing_phase = dao.get_wuxing_phase(self.nayin_wuxing)
+        # 阴阳平衡（基于天干地支阴阳）
+        gan_yinyang = '阳' if self.gan in ['甲','丙','戊','庚','壬'] else '阴'
+        zhi_yinyang = '阳' if self.zhi in ['子','寅','辰','午','申','戌'] else '阴'
+        yin_force = 10 if gan_yinyang == '阴' or zhi_yinyang == '阴' else 0
+        yang_force = 10 if gan_yinyang == '阳' or zhi_yinyang == '阳' else 0
+        balance = dao.check_balance(yin_force, yang_force)
+        return {
+            'wuxing_phase': wuxing_phase,
+            'yin_yang_balance': balance,
+            'gan_yinyang': gan_yinyang,
+            'zhi_yinyang': zhi_yinyang
+        }
+    
+    def get_space_shen_sha(self, direction: str) -> dict:
+        """获取空间神煞（基于方位）"""
+        # 方位与地支对应
+        direction_zhi = {
+            '东': ['卯'], '南': ['午'], '西': ['酉'], '北': ['子'],
+            '东南': ['辰','巳'], '西南': ['未','申'], '西北': ['戌','亥'], '东北': ['丑','寅']
+        }
+        affected = False
+        for d, zhilist in direction_zhi.items():
+            if direction == d and self.zhi in zhilist:
+                affected = True
+                break
+        # 空间神煞影响
+        space_effects = {
+            '东': {'青龙': 0.8, '贵人': 0.6},
+            '南': {'朱雀': 0.7, '文昌': 0.5},
+            '西': {'白虎': -0.6, '杀': -0.8},
+            '北': {'玄武': -0.5, '盗': -0.7}
+        }
+        effect = space_effects.get(direction, {})
+        return {'affected': affected, 'effects': effect}
 
 # ================== TimeEngine 类 ==================
 class TimeEngine:
@@ -409,6 +562,577 @@ class TimeEngine:
         # 日柱变化一般不影响全局旺衰，但需更新空亡状态（若以日柱定空亡，可在此处理）
         self._update_all_qi()   # 可选，但为统一状态，保留
 
+    def calculate_all_shen_sha(self) -> dict:
+        """计算四柱神煞（以日柱为参考）"""
+        day_gan = self.day_gz.gan
+        day_zhi = self.day_gz.zhi
+        year_zhi = self.year_gz.zhi
+        
+        shen_sha_results = {}
+        for name, gz in zip(['年柱','月柱','日柱','时柱'], self.all_ganzhi):
+            shen_sha = gz.get_shen_sha(ref_gan=day_gan, ref_zhi=year_zhi)
+            shen_sha_results[name] = {
+                '干支': f"{gz.gan}{gz.zhi}",
+                '神煞': shen_sha.shen_sha_list,
+                '吉神数': shen_sha.get_positive_count(),
+                '凶煞数': shen_sha.get_negative_count()
+            }
+        return shen_sha_results
+    
+    def apply_shen_sha_to_all_qi(self):
+        """应用神煞影响至所有气"""
+        day_gan = self.day_gz.gan
+        day_zhi = self.day_gz.zhi
+        year_zhi = self.year_gz.zhi
+        
+        for gz in self.all_ganzhi:
+            gz.apply_shen_sha_to_qi(ref_gan=day_gan, ref_zhi=year_zhi)
+    
+    def get_dao_for_system(self) -> Dao:
+        """获取系统级的道对象"""
+        dao = Dao()
+        # 根据四柱阴阳平衡设置太极状态
+        yin_count = 0
+        yang_count = 0
+        for gz in self.all_ganzhi:
+            if gz.gan in ['甲','丙','戊','庚','壬']:
+                yang_count += 1
+            else:
+                yin_count += 1
+            if gz.zhi in ['子','寅','辰','午','申','戌']:
+                yang_count += 1
+            else:
+                yin_count += 1
+        dao.check_balance(yin_count, yang_count)
+        dao.evolve_taiji(step=2)  # 假设已演化到阴阳阶段
+        return dao
+    
+    def get_de_for_system(self) -> dict:
+        """获取系统级的德性分析"""
+        de_results = {}
+        for name, gz in zip(['年柱','月柱','日柱','时柱'], self.all_ganzhi):
+            de = gz.get_de_object()
+            de_results[name] = {
+                '干支': f"{gz.gan}{gz.zhi}",
+                '五行': gz.nayin_wuxing,
+                '德性': de.get_virtue(),
+                '完整度': de.integrity,
+                '显化度': de.manifestation
+            }
+        return de_results
+    
+    def get_space_shen_sha_for_directions(self) -> dict:
+        """获取八个方位的空间神煞影响"""
+        directions = ['东','南','西','北','东南','西南','西北','东北']
+        results = {}
+        for direction in directions:
+            direction_effects = {}
+            for gz in self.all_ganzhi:
+                effect = gz.get_space_shen_sha(direction)
+                if effect['affected']:
+                    direction_effects[f"{gz.gan}{gz.zhi}"] = effect['effects']
+            results[direction] = direction_effects
+        return results
+    
+    def advance_with_shen_sha(self):
+        """推进时间并更新神煞状态"""
+        # 保存当前神煞状态
+        old_shen_sha = self.calculate_all_shen_sha()
+        # 推进时间（默认推进一天）
+        self.advance_day()
+        # 重新计算神煞
+        new_shen_sha = self.calculate_all_shen_sha()
+        # 应用神煞影响
+        self.apply_shen_sha_to_all_qi()
+        return {'old': old_shen_sha, 'new': new_shen_sha}
+
+# ================== 道、德、神煞扩展 ==================
+class Dao:
+    """
+    道：宇宙根本法则，阴阳五行生克制化之根本规律
+    """
+    # 阴阳属性
+    YIN_YANG = {'阴': -1, '阳': 1}
+    
+    # 五行生克关系
+    WUXING_GENERATE = {'木': '火', '火': '土', '土': '金', '金': '水', '水': '木'}
+    WUXING_RESTRICT = {'木': '土', '土': '水', '水': '火', '火': '金', '金': '木'}
+    
+    # 五行反生反克
+    WUXING_REVERSE_GENERATE = {v: k for k, v in WUXING_GENERATE.items()}
+    WUXING_REVERSE_RESTRICT = {v: k for k, v in WUXING_RESTRICT.items()}
+    
+    # 五行对应方位
+    WUXING_DIRECTION = {'木': '东', '火': '南', '土': '中', '金': '西', '水': '北'}
+    
+    # 五行对应季节
+    WUXING_SEASON = {'木': '春', '火': '夏', '土': '季夏', '金': '秋', '水': '冬'}
+    
+    def __init__(self):
+        self.taiji = 0  # 太极状态，0为无极，1为太极，2为阴阳
+        self.yin_yang_balance = 0.0  # 阴阳平衡度，-1为纯阴，1为纯阳
+    
+    def generate(self, wuxing: str) -> str:
+        """五行相生"""
+        return self.WUXING_GENERATE.get(wuxing, wuxing)
+    
+    def restrict(self, wuxing: str) -> str:
+        """五行相克"""
+        return self.WUXING_RESTRICT.get(wuxing, wuxing)
+    
+    def check_balance(self, yin_force: float, yang_force: float) -> float:
+        """计算阴阳平衡度"""
+        total = yin_force + yang_force
+        if total == 0:
+            return 0.0
+        self.yin_yang_balance = (yang_force - yin_force) / total
+        return self.yin_yang_balance
+    
+    def evolve_taiji(self, step: int = 1):
+        """太极演化：无极→太极→阴阳→五行"""
+        self.taiji = min(3, self.taiji + step)
+    
+    def get_wuxing_phase(self, wuxing: str, time_factor: float = 1.0) -> dict:
+        """获取五行在当前时空下的相位状态"""
+        # 相位包括：生、旺、墓、绝等
+        phases = {
+            '生': 0.2 * time_factor,
+            '旺': 0.8 * time_factor,
+            '墓': -0.3 * time_factor,
+            '绝': -0.5 * time_factor
+        }
+        return phases
+
+
+class De:
+    """
+    德：道的体现，五行之德，事物品质特性
+    """
+    # 五行之德
+    WUXING_DE = {
+        '木': {'德': '仁', '性': '曲直', '情': '仁慈', '色': '青', '味': '酸'},
+        '火': {'德': '礼', '性': '炎上', '情': '恭敬', '色': '赤', '味': '苦'},
+        '土': {'德': '信', '性': '稼穑', '情': '诚实', '色': '黄', '味': '甘'},
+        '金': {'德': '义', '性': '从革', '情': '仗义', '色': '白', '味': '辛'},
+        '水': {'德': '智', '性': '润下', '情': '智慧', '色': '黑', '味': '咸'}
+    }
+    
+    # 五常之德
+    WUCHANG = {'仁': '木', '义': '金', '礼': '火', '智': '水', '信': '土'}
+    
+    def __init__(self, wuxing: str = '土'):
+        self.wuxing = wuxing
+        self.virtue = self.WUXING_DE.get(wuxing, {})
+        self.integrity = 5  # 德性完整度 1-10
+        self.manifestation = 0.8  # 显化程度 0-1
+    
+    def get_virtue(self) -> dict:
+        """获取五行对应的德性"""
+        return self.virtue
+    
+    def get_wuxing_by_virtue(self, virtue: str) -> str:
+        """根据德性获取五行"""
+        return self.WUCHANG.get(virtue, '土')
+    
+    def cultivate(self, amount: int = 1):
+        """修养德性"""
+        self.integrity = min(10, self.integrity + amount)
+    
+    def degrade(self, amount: int = 1):
+        """德性衰减"""
+        self.integrity = max(1, self.integrity - amount)
+    
+    def manifest(self, factor: float = 0.1):
+        """德性显化"""
+        self.manifestation = min(1.0, self.manifestation + factor)
+    
+    def conceal(self, factor: float = 0.1):
+        """德性隐藏"""
+        self.manifestation = max(0.0, self.manifestation - factor)
+
+
+
+
+# ================== 神煞类 ==================
+class ShenSha:
+    """
+    神煞：吉神凶煞系统，基于干支、五行、节气计算
+    """
+    # 天乙贵人表（日干对应地支）
+    TIANYI_GUI_REN = {
+        '甲': ['丑','未'], '乙': ['子','申'], '丙': ['亥','酉'],
+        '丁': ['亥','酉'], '戊': ['丑','未'], '己': ['子','申'],
+        '庚': ['丑','未'], '辛': ['寅','午'], '壬': ['卯','巳'],
+        '癸': ['卯','巳']
+    }
+    
+    # 太极贵人表（日干对应地支）
+    TAIJI_GUI_REN = {
+        '甲': ['子','午'], '乙': ['子','午'], '丙': ['卯','酉'],
+        '丁': ['卯','酉'], '戊': ['辰','戌','丑','未'], '己': ['辰','戌','丑','未'],
+        '庚': ['寅','亥'], '辛': ['寅','亥'], '壬': ['申','巳'],
+        '癸': ['申','巳']
+    }
+    
+    # 文昌贵人表（日干对应地支）
+    WENCHANG_GUI_REN = {
+        '甲': ['巳'], '乙': ['午'], '丙': ['申'], '丁': ['酉'],
+        '戊': ['申'], '己': ['酉'], '庚': ['亥'], '辛': ['子'],
+        '壬': ['寅'], '癸': ['卯']
+    }
+    
+    # 驿马表（年支对应地支）
+    YI_MA = {
+        '申': ['寅'], '子': ['寅'], '辰': ['寅'],
+        '寅': ['申'], '午': ['申'], '戌': ['申'],
+        '巳': ['亥'], '酉': ['亥'], '丑': ['亥'],
+        '亥': ['巳'], '卯': ['巳'], '未': ['巳']
+    }
+    
+    # 将星表（年支对应地支）
+    JIANG_XING = {
+        '寅': ['子'], '卯': ['卯'], '辰': ['辰'], '巳': ['巳'],
+        '午': ['午'], '未': ['未'], '申': ['申'], '酉': ['酉'],
+        '戌': ['戌'], '亥': ['亥'], '子': ['子'], '丑': ['丑']
+    }
+    
+    # 华盖表（年支对应地支）
+    HUA_GAI = {
+        '寅': ['戌'], '卯': ['未'], '辰': ['辰'], '巳': ['丑'],
+        '午': ['戌'], '未': ['未'], '申': ['辰'], '酉': ['丑'],
+        '戌': ['戌'], '亥': ['未'], '子': ['辰'], '丑': ['丑']
+    }
+    
+    # 劫煞表（年支对应地支）
+    JIE_SHA = {
+        '申': ['巳'], '子': ['巳'], '辰': ['巳'],
+        '寅': ['亥'], '午': ['亥'], '戌': ['亥'],
+        '巳': ['申'], '酉': ['申'], '丑': ['申'],
+        '亥': ['寅'], '卯': ['寅'], '未': ['寅']
+    }
+    
+    # 灾煞表（年支对应地支）
+    ZAI_SHA = {
+        '申': ['午'], '子': ['午'], '辰': ['午'],
+        '寅': ['子'], '午': ['子'], '戌': ['子'],
+        '巳': ['酉'], '酉': ['酉'], '丑': ['酉'],
+        '亥': ['卯'], '卯': ['卯'], '未': ['卯']
+    }
+    
+    # 岁煞表（年支对应地支）
+    SUI_SHA = {
+        '申': ['未'], '子': ['未'], '辰': ['未'],
+        '寅': ['丑'], '午': ['丑'], '戌': ['丑'],
+        '巳': ['辰'], '酉': ['辰'], '丑': ['辰'],
+        '亥': ['戌'], '卯': ['戌'], '未': ['戌']
+    }
+    
+    def __init__(self, gan: str, zhi: str, ref_gan: str = None, ref_zhi: str = None):
+        """
+        神煞计算基于目标干支（gan, zhi）和参考干支（通常为年柱或日柱）
+        """
+        self.gan = gan
+        self.zhi = zhi
+        self.ref_gan = ref_gan if ref_gan else gan
+        self.ref_zhi = ref_zhi if ref_zhi else zhi
+        self.shen_sha_list = self.calculate_all()
+    
+    def calculate_all(self) -> dict:
+        """计算所有神煞"""
+        return {
+            '天乙贵人': self.is_tianyi_gui_ren(),
+            '太极贵人': self.is_taiji_gui_ren(),
+            '文昌贵人': self.is_wenchang_gui_ren(),
+            '驿马': self.is_yi_ma(),
+            '将星': self.is_jiang_xing(),
+            '华盖': self.is_hua_gai(),
+            '劫煞': self.is_jie_sha(),
+            '灾煞': self.is_zai_sha(),
+            '岁煞': self.is_sui_sha()
+        }
+    
+    def is_tianyi_gui_ren(self) -> bool:
+        """是否天乙贵人（以日干对地支）"""
+        return self.zhi in self.TIANYI_GUI_REN.get(self.ref_gan, [])
+    
+    def is_taiji_gui_ren(self) -> bool:
+        """是否太极贵人（以日干对地支）"""
+        return self.zhi in self.TAIJI_GUI_REN.get(self.ref_gan, [])
+    
+    def is_wenchang_gui_ren(self) -> bool:
+        """是否文昌贵人（以日干对地支）"""
+        return self.zhi in self.WENCHANG_GUI_REN.get(self.ref_gan, [])
+    
+    def is_yi_ma(self) -> bool:
+        """是否驿马（以年支对地支）"""
+        return self.zhi in self.YI_MA.get(self.ref_zhi, [])
+    
+    def is_jiang_xing(self) -> bool:
+        """是否将星（以年支对地支）"""
+        return self.zhi in self.JIANG_XING.get(self.ref_zhi, [])
+    
+    def is_hua_gai(self) -> bool:
+        """是否华盖（以年支对地支）"""
+        return self.zhi in self.HUA_GAI.get(self.ref_zhi, [])
+    
+    def is_jie_sha(self) -> bool:
+        """是否劫煞（以年支对地支）"""
+        return self.zhi in self.JIE_SHA.get(self.ref_zhi, [])
+    
+    def is_zai_sha(self) -> bool:
+        """是否灾煞（以年支对地支）"""
+        return self.zhi in self.ZAI_SHA.get(self.ref_zhi, [])
+    
+    def is_sui_sha(self) -> bool:
+        """是否岁煞（以年支对地支）"""
+        return self.zhi in self.SUI_SHA.get(self.ref_zhi, [])
+    
+    def get_positive_count(self) -> int:
+        """获取吉神数量"""
+        positive = ['天乙贵人', '太极贵人', '文昌贵人', '将星']
+        count = 0
+        for name, exists in self.shen_sha_list.items():
+            if name in positive and exists:
+                count += 1
+        return count
+    
+    def get_negative_count(self) -> int:
+        """获取凶煞数量"""
+        negative = ['劫煞', '灾煞', '岁煞']
+        count = 0
+        for name, exists in self.shen_sha_list.items():
+            if name in negative and exists:
+                count += 1
+        return count
+    
+    def get_neutral_count(self) -> int:
+        """获取中性神煞数量（驿马、华盖）"""
+        neutral = ['驿马', '华盖']
+        count = 0
+        for name, exists in self.shen_sha_list.items():
+            if name in neutral and exists:
+                count += 1
+        return count
+    
+    def get_shen_sha_strength(self, shen_sha_name: str) -> float:
+        """获取神煞强度（0-1）"""
+        if not self.shen_sha_list.get(shen_sha_name, False):
+            return 0.0
+        # 基础强度
+        strength = 0.7
+        # 干支生克影响
+        # 简化：若神煞地支与目标干支五行相生则增强
+        # 暂时返回固定值
+        return strength
+    
+    def affect_qi(self, qi: Qi) -> Qi:
+        """神煞对气的影响"""
+        # 吉神增加气量纯度，凶煞减少
+        positive_count = self.get_positive_count()
+        negative_count = self.get_negative_count()
+        delta_amount = positive_count * 3 - negative_count * 2
+        delta_purity = positive_count * 1 - negative_count * 1
+        qi.change(delta_amount, delta_purity)
+        return qi
+
+# ================== 空间神煞类 ==================
+class SpaceShenSha:
+    """
+    空间神煞：方位相关的神煞系统，处理方位吉凶、风水神煞等
+    """
+    # 八方对应地支
+    DIRECTION_ZHI = {
+        '东': ['卯'],
+        '东南': ['辰','巳'],
+        '南': ['午'],
+        '西南': ['未','申'],
+        '西': ['酉'],
+        '西北': ['戌','亥'],
+        '北': ['子'],
+        '东北': ['丑','寅']
+    }
+    
+    # 八方神煞（吉凶）
+    DIRECTION_SHEN_SHA = {
+        '东': {'青龙': 0.8, '贵人': 0.6, '煞': -0.3},
+        '东南': {'文昌': 0.7, '煞': -0.4},
+        '南': {'朱雀': 0.6, '天喜': 0.5, '煞': -0.5},
+        '西南': {'太岁': -0.7, '病符': -0.8},
+        '西': {'白虎': -0.8, '杀': -0.9},
+        '西北': {'天门': 0.4, '煞': -0.6},
+        '北': {'玄武': -0.5, '盗': -0.7},
+        '东北': {'鬼门': -0.8, '艮': 0.3}
+    }
+    
+    # 二十四山方位（更精细）
+    TWENTY_FOUR_MOUNTAINS = {
+        '壬': ['子', 337.5, 352.5],
+        '子': ['子', 352.5, 7.5],
+        '癸': ['子', 7.5, 22.5],
+        '丑': ['丑', 22.5, 37.5],
+        '艮': ['丑', 37.5, 52.5],
+        '寅': ['寅', 52.5, 67.5],
+        '甲': ['寅', 67.5, 82.5],
+        '卯': ['卯', 82.5, 97.5],
+        '乙': ['卯', 97.5, 112.5],
+        '辰': ['辰', 112.5, 127.5],
+        '巽': ['辰', 127.5, 142.5],
+        '巳': ['巳', 142.5, 157.5],
+        '丙': ['巳', 157.5, 172.5],
+        '午': ['午', 172.5, 187.5],
+        '丁': ['午', 187.5, 202.5],
+        '未': ['未', 202.5, 217.5],
+        '坤': ['未', 217.5, 232.5],
+        '申': ['申', 232.5, 247.5],
+        '庚': ['申', 247.5, 262.5],
+        '酉': ['酉', 262.5, 277.5],
+        '辛': ['酉', 277.5, 292.5],
+        '戌': ['戌', 292.5, 307.5],
+        '乾': ['戌', 307.5, 322.5],
+        '亥': ['亥', 322.5, 337.5]
+    }
+    
+    def __init__(self, center_ganzhi: str = '甲子'):
+        """
+        center_ganzhi: 中心点干支（如房屋坐山、个人命宫等）
+        """
+        self.center_gan = center_ganzhi[0]
+        self.center_zhi = center_ganzhi[1]
+        self.center_wuxing = NAYIN_MAP.get(center_ganzhi, '土')
+    
+    def get_direction_effect(self, direction: str, target_ganzhi: str = None) -> dict:
+        """获取方位对目标干支的影响"""
+        target_gan = target_ganzhi[0] if target_ganzhi else self.center_gan
+        target_zhi = target_ganzhi[1] if target_ganzhi else self.center_zhi
+        
+        # 方位地支
+        direction_zhis = self.DIRECTION_ZHI.get(direction, [])
+        affected = target_zhi in direction_zhis
+        
+        # 神煞影响
+        shen_sha = self.DIRECTION_SHEN_SHA.get(direction, {})
+        
+        # 五行生克影响
+        wuxing_effect = 0.0
+        if direction_zhis:
+            # 方位地支五行
+            dir_wuxing = GanZhi.ZHI_WUXING.get(direction_zhis[0], '土')
+            target_wuxing = NAYIN_MAP.get(target_gan+target_zhi, '土')
+            # 生克关系
+            if dir_wuxing == target_wuxing:
+                wuxing_effect = 0.5
+            elif self._is_generate(dir_wuxing, target_wuxing):
+                wuxing_effect = 0.8
+            elif self._is_restrict(dir_wuxing, target_wuxing):
+                wuxing_effect = -0.6
+        
+        return {
+            'affected': affected,
+            'shen_sha': shen_sha,
+            'wuxing_effect': wuxing_effect,
+            'total_effect': sum(shen_sha.values()) + wuxing_effect
+        }
+    
+    def get_twenty_four_mountain_effect(self, mountain: str, target_ganzhi: str) -> dict:
+        """获取二十四山方位的影响"""
+        if mountain not in self.TWENTY_FOUR_MOUNTAINS:
+            return {}
+        
+        mountain_info = self.TWENTY_FOUR_MOUNTAINS[mountain]
+        mountain_zhi = mountain_info[0]
+        target_zhi = target_ganzhi[1]
+        
+        # 地支六合、六冲、三合等关系
+        liuhe = {
+            '子': '丑', '丑': '子',
+            '寅': '亥', '亥': '寅',
+            '卯': '戌', '戌': '卯',
+            '辰': '酉', '酉': '辰',
+            '巳': '申', '申': '巳',
+            '午': '未', '未': '午'
+        }
+        liuchong = {
+            '子': '午', '午': '子',
+            '丑': '未', '未': '丑',
+            '寅': '申', '申': '寅',
+            '卯': '酉', '酉': '卯',
+            '辰': '戌', '戌': '辰',
+            '巳': '亥', '亥': '巳'
+        }
+        
+        relationship = '普通'
+        effect = 0.0
+        if mountain_zhi == target_zhi:
+            relationship = '同支'
+            effect = 0.3
+        elif liuhe.get(mountain_zhi) == target_zhi:
+            relationship = '六合'
+            effect = 0.8
+        elif liuchong.get(mountain_zhi) == target_zhi:
+            relationship = '六冲'
+            effect = -0.7
+        
+        return {
+            'mountain': mountain,
+            'relationship': relationship,
+            'effect': effect,
+            'direction': self._get_direction_from_mountain(mountain)
+        }
+    
+    def _get_direction_from_mountain(self, mountain: str) -> str:
+        """从二十四山获取八方方位"""
+        for dir_name, zhilist in self.DIRECTION_ZHI.items():
+            for zhi in zhilist:
+                if mountain in ['甲','乙','丙','丁','庚','辛','壬','癸']:
+                    # 天干方位
+                    if mountain in ['甲','乙'] and dir_name == '东':
+                        return dir_name
+                    elif mountain in ['丙','丁'] and dir_name == '南':
+                        return dir_name
+                    elif mountain in ['庚','辛'] and dir_name == '西':
+                        return dir_name
+                    elif mountain in ['壬','癸'] and dir_name == '北':
+                        return dir_name
+                else:
+                    if mountain == zhi:
+                        return dir_name
+        return '中'
+    
+    @staticmethod
+    def _is_generate(wuxing1: str, wuxing2: str) -> bool:
+        """五行相生"""
+        generate = {'木': '火', '火': '土', '土': '金', '金': '水', '水': '木'}
+        return generate.get(wuxing1) == wuxing2
+    
+    @staticmethod
+    def _is_restrict(wuxing1: str, wuxing2: str) -> bool:
+        """五行相克"""
+        restrict = {'木': '土', '土': '水', '水': '火', '火': '金', '金': '木'}
+        return restrict.get(wuxing1) == wuxing2
+    
+    def analyze_space_for_ganzhi(self, ganzhi: str, directions: list = None) -> dict:
+        """分析干支在多个方位的空间神煞"""
+        if directions is None:
+            directions = list(self.DIRECTION_ZHI.keys())
+        
+        results = {}
+        for direction in directions:
+            effect = self.get_direction_effect(direction, ganzhi)
+            results[direction] = effect
+        
+        # 找出最佳和最差方位
+        best_dir = max(results.items(), key=lambda x: x[1]['total_effect'])
+        worst_dir = min(results.items(), key=lambda x: x[1]['total_effect'])
+        
+        return {
+            'ganzhi': ganzhi,
+            'results': results,
+            'best_direction': best_dir[0],
+            'best_effect': best_dir[1]['total_effect'],
+            'worst_direction': worst_dir[0],
+            'worst_effect': worst_dir[1]['total_effect']
+        }
+
 # ================== 示例用法 ==================
 if __name__ == '__main__':
     # 创建时间引擎（年柱庚辰，月柱己卯，日柱甲子，时柱甲子，男，出生日期2000-03-05）
@@ -440,3 +1164,42 @@ if __name__ == '__main__':
     print(f"\n春季木火生克前: 木量={jia_yin.qi.amount}, 火量={bing_yin.qi.amount}")
     jia_yin.qi.interact_with_other(bing_yin.qi, 'generate')
     print(f"生后: 木量={jia_yin.qi.amount}, 火量={bing_yin.qi.amount}")
+    
+    # ===== 道、德、神煞、空间神煞测试 =====
+    print("\n" + "="*50)
+    print("道、德、神煞、空间神煞测试")
+    print("="*50)
+    
+    # 道测试
+    dao = Dao()
+    print(f"\n道 - 木生火: {dao.generate('木')}")
+    print(f"道 - 木克土: {dao.restrict('木')}")
+    print(f"道 - 阴阳平衡度: {dao.check_balance(3, 7):.2f}")
+    
+    # 德测试
+    de = De('木')
+    print(f"\n德 - 木之德: {de.get_virtue()}")
+    de.cultivate(2)
+    print(f"德 - 修养后完整度: {de.integrity}")
+    
+    # 神煞测试
+    shen = ShenSha('甲', '子', ref_gan='甲', ref_zhi='寅')
+    print(f"\n神煞 - 甲子 (参考甲寅): {shen.shen_sha_list}")
+    print(f"吉神数量: {shen.get_positive_count()}")
+    print(f"凶煞数量: {shen.get_negative_count()}")
+    
+    # 空间神煞测试
+    space = SpaceShenSha('甲子')
+    effect = space.get_direction_effect('东', '甲子')
+    print(f"\n空间神煞 - 东方对甲子的影响: {effect}")
+    
+    # 时间引擎集成测试
+    print("\n" + "="*50)
+    print("时间引擎集成测试")
+    print("="*50)
+    shen_sha_results = engine.calculate_all_shen_sha()
+    print(f"四柱神煞: {shen_sha_results}")
+    de_results = engine.get_de_for_system()
+    print(f"四柱德性: {de_results}")
+    space_results = engine.get_space_shen_sha_for_directions()
+    print(f"八方空间神煞: {space_results}")
